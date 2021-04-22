@@ -6,7 +6,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from nflib.made import MADE
+import sys, os
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..', '..'))
+from plasma.pytorch_normalizing_flows.nflib.made import MADE
 
 class LeafParam(nn.Module):
     """ 

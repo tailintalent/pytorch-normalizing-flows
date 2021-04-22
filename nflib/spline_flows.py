@@ -11,7 +11,10 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.nn.functional as F
 
-from nflib.nets import MLP
+import sys, os
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..', '..'))
+from plasma.pytorch_normalizing_flows.nflib.nets import MLP
 
 DEFAULT_MIN_BIN_WIDTH = 1e-3
 DEFAULT_MIN_BIN_HEIGHT = 1e-3

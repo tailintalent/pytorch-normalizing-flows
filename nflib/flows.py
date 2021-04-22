@@ -34,11 +34,15 @@ https://arxiv.org/abs/1912.02762
 """
 
 import numpy as np
+import pdb
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from nflib.nets import LeafParam, MLP, ARMLP
+import sys, os
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..'))
+sys.path.append(os.path.join(os.path.dirname("__file__"), '..', '..'))
+from plasma.pytorch_normalizing_flows.nflib.nets import LeafParam, MLP, ARMLP
 
 class AffineConstantFlow(nn.Module):
     """ 
@@ -54,21 +58,21 @@ class AffineConstantFlow(nn.Module):
         s = self.s if self.s is not None else x.new_zeros(x.size())
         t = self.t if self.t is not None else x.new_zeros(x.size())
         z = x * torch.exp(s) + t
-        log_det = torch.sum(s, dim=1)
+        log_det = torch.sum(s, dim=-1)
         return z, log_det
     
     def backward(self, z):
         s = self.s if self.s is not None else z.new_zeros(z.size())
         t = self.t if self.t is not None else z.new_zeros(z.size())
         x = (z - t) * torch.exp(-s)
-        log_det = torch.sum(-s, dim=1)
+        log_det = torch.sum(-s, dim=-1)
         return x, log_det
 
 
 class ActNorm(AffineConstantFlow):
     """
     Really an AffineConstantFlow but with a data-dependent initialization,
-    where on the very first batch we clever initialize the s,t so that the output
+    where on the very first batch we cleverly initialize the s,t so that the output
     is unit gaussian. As described in Glow paper.
     """
     def __init__(self, *args, **kwargs):
@@ -76,6 +80,7 @@ class ActNorm(AffineConstantFlow):
         self.data_dep_init_done = False
     
     def forward(self, x):
+        """x: [[S], B, X]. """
         # first batch is used for init
         if not self.data_dep_init_done:
             assert self.s is not None and self.t is not None # for now
@@ -105,7 +110,11 @@ class AffineHalfFlow(nn.Module):
             self.t_cond = net_class(self.dim // 2, self.dim // 2, nh)
         
     def forward(self, x):
-        x0, x1 = x[:,::2], x[:,1::2]
+        """Starting from x (data distribution), after the layer f, becomes z:
+        log p(z) = log p(x) - log det|df/dx|  => log p(x) = log p(z) + log det|df/dx|
+        x: shape [[S], B, X].
+        """
+        x0, x1 = x[...,::2], x[...,1::2]
         if self.parity:
             x0, x1 = x1, x0
         s = self.s_cond(x0)
@@ -114,12 +123,13 @@ class AffineHalfFlow(nn.Module):
         z1 = torch.exp(s) * x1 + t # transform this half as a function of the other
         if self.parity:
             z0, z1 = z1, z0
-        z = torch.cat([z0, z1], dim=1)
-        log_det = torch.sum(s, dim=1)
+        z = torch.cat([z0, z1], dim=-1)
+        log_det = torch.sum(s, dim=-1)
         return z, log_det
     
     def backward(self, z):
-        z0, z1 = z[:,::2], z[:,1::2]
+        """z: shape [[S], B, Z]."""
+        z0, z1 = z[...,::2], z[...,1::2]
         if self.parity:
             z0, z1 = z1, z0
         s = self.s_cond(z0)
@@ -128,8 +138,8 @@ class AffineHalfFlow(nn.Module):
         x1 = (z1 - t) * torch.exp(-s) # reverse the transform on this half
         if self.parity:
             x0, x1 = x1, x0
-        x = torch.cat([x0, x1], dim=1)
-        log_det = torch.sum(-s, dim=1)
+        x = torch.cat([x0, x1], dim=-1)
+        log_det = torch.sum(-s, dim=-1)
         return x, log_det
 
 
@@ -252,8 +262,7 @@ class NormalizingFlow(nn.Module):
         self.flows = nn.ModuleList(flows)
 
     def forward(self, x):
-        m, _ = x.shape
-        log_det = torch.zeros(m)
+        log_det = torch.zeros(x.shape[:-1])
         zs = [x]
         for flow in self.flows:
             x, ld = flow.forward(x)
@@ -262,8 +271,12 @@ class NormalizingFlow(nn.Module):
         return zs, log_det
 
     def backward(self, z):
-        m, _ = z.shape
-        log_det = torch.zeros(m)
+        """Backward, from z to x, and compute the log_det.
+
+        Args:
+            z: [[S], B, Z]
+        """
+        log_det = torch.zeros(*z.shape[:-1])
         xs = [z]
         for flow in self.flows[::-1]:
             z, ld = flow.backward(z)
